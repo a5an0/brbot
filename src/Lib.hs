@@ -15,7 +15,7 @@ import Data.List.Split
 import System.Environment
 import Wuss
 import Control.Concurrent (forkIO)
-import Control.Monad (forever, unless, void, when)
+import Control.Monad (forever, unless, void, when, liftM)
 import Data.Text (Text, pack)
 import Network.WebSockets (ClientApp, receiveData, sendClose, sendTextData)
 import Network.WebSockets.Connection (Connection)
@@ -125,11 +125,11 @@ ws connection = do
         decodedMsg <- case (decode msg :: Maybe RtmMessage) of
           Just rtmMsg -> return rtmMsg
           Nothing -> return $ RtmMessage "" "" "" "" ""
-        let uidList = allAways >>= (return . fmap (\x->uid x))
+        let uidList = liftM (fmap uid) allAways
         let mentionedUsers = filter (\x -> ("<@" ++ x ++">:" `elem` splitOn " " (text decodedMsg)) || ("<@" ++ x ++">" `elem` splitOn " " (text decodedMsg)))<$> uidList
-        let replies = mentionedUsers >>= return . fmap (buildReply (channel decodedMsg) (user decodedMsg))
+        let replies =  liftM (fmap (buildReply (channel decodedMsg) (user decodedMsg))) mentionedUsers
         _ <- L.putStrLn msg
-        replies >>= sequence . (sendMessages connection )
+        replies >>= sequence . sendMessages connection 
   --      if (channel decodedMsg == "C0460DZEC" ) 
   --        then replies >>= sequence . (sendMessages connection )
   --        else return [()]
@@ -145,7 +145,7 @@ ws connection = do
 
 sendMessages :: Network.WebSockets.Connection.Connection -> [L.ByteString] -> [IO ()]
 sendMessages _ [] = []
-sendMessages connection (x:xs) = (sendTextData connection x) : sendMessages connection xs
+sendMessages connection (x:xs) = sendTextData connection x : sendMessages connection xs
 
 data AwayField = AwayField
                  { uid :: String
