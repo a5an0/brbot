@@ -128,7 +128,7 @@ ws connection = do
         let uidList = liftM (fmap uid) allAways
         let mentionedUsers = filter (\x -> ("<@" ++ x ++">:" `elem` splitOn " " (text decodedMsg)) || ("<@" ++ x ++">" `elem` splitOn " " (text decodedMsg)))<$> uidList
         let replies =  liftM (fmap (buildReply (channel decodedMsg) (user decodedMsg))) mentionedUsers
-        _ <- L.putStrLn msg
+        _ <- L.putStrLn msg -- mostly for debug
         replies >>= sequence . sendMessages connection 
   --      if (channel decodedMsg == "C0460DZEC" ) 
   --        then replies >>= sequence . (sendMessages connection )
