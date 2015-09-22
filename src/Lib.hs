@@ -8,8 +8,10 @@ module Lib
 
 import Network.HTTP.Conduit
 import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.Lazy.Char8 as L8 (putStrLn)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson
+import Data.Foldable (Foldable, traverse_)
 import GHC.Generics
 import Control.Applicative
 import Data.List.Split
@@ -20,7 +22,7 @@ import Control.Error.Safe (atErr)
 import Control.Monad (forever, unless, void, when, liftM)
 import Data.Text (Text, pack)
 import Network.WebSockets (ClientApp, receiveData, sendClose, sendTextData)
-import Network.WebSockets.Connection (Connection)
+import Network.WebSockets.Connection as WS (Connection)
 
 import qualified Data.Text as T
 import           Database.SQLite.Simple
@@ -132,9 +134,9 @@ ws connection = do
           Nothing -> return $ RtmMessage "" "" "" "" ""
         let uidList = liftM (fmap uid) allAways
         let mentionedUsers = filter (\x -> ("<@" ++ x ++">:" `elem` splitOn " " (text decodedMsg)) || ("<@" ++ x ++">" `elem` splitOn " " (text decodedMsg)))<$> uidList
-        let replies =  liftM (fmap (buildReply (channel decodedMsg) (user decodedMsg))) mentionedUsers
-        _ <- L.putStrLn msg -- mostly for debug
-        replies >>= sequence . sendMessages connection
+        replies <- liftM (fmap (buildReply (channel decodedMsg) (user decodedMsg))) mentionedUsers
+        void $ L8.putStrLn msg -- mostly for debug
+        sendMessages connection replies
   --      if (channel decodedMsg == "C0460DZEC" )
   --        then replies >>= sequence . (sendMessages connection )
   --        else return [()]
@@ -148,9 +150,8 @@ ws connection = do
 
     sendClose connection (pack "Bye!")
 
-sendMessages :: Network.WebSockets.Connection.Connection -> [L.ByteString] -> [IO ()]
-sendMessages _ [] = []
-sendMessages connection (x:xs) = sendTextData connection x : sendMessages connection xs
+sendMessages :: Foldable t => WS.Connection -> t L.ByteString -> IO ()
+sendMessages connection = traverse_ (sendTextData connection)
 
 data AwayField = AwayField
                  { uid :: String
