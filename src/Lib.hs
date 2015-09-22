@@ -15,6 +15,7 @@ import Data.List.Split
 import System.Environment
 import Wuss
 import Control.Concurrent (forkIO)
+import Control.Error.Safe (atErr)
 import Control.Monad (forever, unless, void, when, liftM)
 import Data.Text (Text, pack)
 import Network.WebSockets (ClientApp, receiveData, sendClose, sendTextData)
@@ -78,28 +79,31 @@ instance ToJSON RtmReplyMsg where
                    , "text" .= repText message
                    ]
 
-
-
 someFunc :: IO ()
-someFunc = wsConnTuple >>= (\x -> runSecureClient (fst x) 443 (snd x) ws) 
+someFunc = do
+  tuple <- wsConnTuple
+  case tuple of
+    Left e -> putStrLn e
+    Right (hostname, path) -> runSecureClient hostname 443 path ws
 
-
-wsConnTuple :: IO (String, String)
+wsConnTuple :: IO (Either String (String, String))
 wsConnTuple = do
-  splitList <- splitOn "/" <$> getWsUrl
-  let hostname = splitList !! 2
-  let path = "/" ++ (splitList !! 3) ++ "/" ++ (splitList !! 4)
-  return (hostname, path)
-  
+  rawUrl <- getWsUrl
+  let splitList = splitOn "/" rawUrl
+  return $ do
+    let err = "malformed url (wsConnTuple): " ++ rawUrl
+    hostname <- atErr err splitList 2
+    path0    <- atErr err splitList 3
+    path1    <- atErr err splitList 4
+    return (hostname, "/" ++ path0 ++ "/" ++ path1)
 
 getWsUrl :: IO String
 getWsUrl = do
   decodedJson <- decode <$> rtmJson
-  case decodedJson of
-    Just rtm -> return $  url rtm
-    Nothing -> return ""
+  return $ case decodedJson of
+    Just rtm -> url rtm
+    Nothing  -> ""
 
-  
 rtmJson :: IO L.ByteString
 rtmJson =  do
   urlString <- ("https://slack.com/api/rtm.start?token=" ++) <$> getEnv "BRBOT_TOKEN"
@@ -129,11 +133,11 @@ ws connection = do
         let mentionedUsers = filter (\x -> ("<@" ++ x ++">:" `elem` splitOn " " (text decodedMsg)) || ("<@" ++ x ++">" `elem` splitOn " " (text decodedMsg)))<$> uidList
         let replies =  liftM (fmap (buildReply (channel decodedMsg) (user decodedMsg))) mentionedUsers
         _ <- L.putStrLn msg -- mostly for debug
-        replies >>= sequence . sendMessages connection 
-  --      if (channel decodedMsg == "C0460DZEC" ) 
+        replies >>= sequence . sendMessages connection
+  --      if (channel decodedMsg == "C0460DZEC" )
   --        then replies >>= sequence . (sendMessages connection )
   --        else return [()]
-        
+
     let loop = do
             line <- getLine
             unless (null line) $ do
