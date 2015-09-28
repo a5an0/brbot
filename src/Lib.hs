@@ -1,3 +1,4 @@
+{-# OPTIONS_GHC -Wall #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
@@ -7,18 +8,21 @@ module Lib
 
 import Network.HTTP.Conduit
 import qualified Data.ByteString.Lazy as L
+import qualified Data.ByteString.Lazy.Char8 as L8 (putStrLn)
 import Control.Monad.IO.Class (liftIO)
 import Data.Aeson
+import Data.Foldable (Foldable, traverse_)
 import GHC.Generics
 import Control.Applicative
 import Data.List.Split
 import System.Environment
 import Wuss
 import Control.Concurrent (forkIO)
+import Control.Error.Safe (atErr)
 import Control.Monad (forever, unless, void, when, liftM)
 import Data.Text (Text, pack)
 import Network.WebSockets (ClientApp, receiveData, sendClose, sendTextData)
-import Network.WebSockets.Connection (Connection)
+import Network.WebSockets.Connection as WS (Connection)
 
 import qualified Data.Text as T
 import           Database.SQLite.Simple
@@ -78,28 +82,31 @@ instance ToJSON RtmReplyMsg where
                    , "text" .= repText message
                    ]
 
-
-
 someFunc :: IO ()
-someFunc = wsConnTuple >>= (\x -> runSecureClient (fst x) 443 (snd x) ws) 
+someFunc = do
+  tuple <- wsConnTuple
+  case tuple of
+    Left e -> putStrLn e
+    Right (hostname, path) -> runSecureClient hostname 443 path ws
 
-
-wsConnTuple :: IO (String, String)
+wsConnTuple :: IO (Either String (String, String))
 wsConnTuple = do
-  splitList <- splitOn "/" <$> getWsUrl
-  let hostname = splitList !! 2
-  let path = "/" ++ (splitList !! 3) ++ "/" ++ (splitList !! 4)
-  return (hostname, path)
-  
+  rawUrl <- getWsUrl
+  let splitList = splitOn "/" rawUrl
+  return $ do
+    let err = "malformed url (wsConnTuple): " ++ rawUrl
+    hostname <- atErr err splitList 2
+    path0    <- atErr err splitList 3
+    path1    <- atErr err splitList 4
+    return (hostname, "/" ++ path0 ++ "/" ++ path1)
 
 getWsUrl :: IO String
 getWsUrl = do
   decodedJson <- decode <$> rtmJson
-  case decodedJson of
-    Just rtm -> return $  url rtm
-    Nothing -> return ""
+  return $ case decodedJson of
+    Just rtm -> url rtm
+    Nothing  -> ""
 
-  
 rtmJson :: IO L.ByteString
 rtmJson =  do
   urlString <- ("https://slack.com/api/rtm.start?token=" ++) <$> getEnv "BRBOT_TOKEN"
@@ -127,13 +134,13 @@ ws connection = do
           Nothing -> return $ RtmMessage "" "" "" "" ""
         let uidList = liftM (fmap uid) allAways
         let mentionedUsers = filter (\x -> ("<@" ++ x ++">:" `elem` splitOn " " (text decodedMsg)) || ("<@" ++ x ++">" `elem` splitOn " " (text decodedMsg)))<$> uidList
-        let replies =  liftM (fmap (buildReply (channel decodedMsg) (user decodedMsg))) mentionedUsers
-        _ <- L.putStrLn msg -- mostly for debug
-        replies >>= sequence . sendMessages connection 
-  --      if (channel decodedMsg == "C0460DZEC" ) 
+        replies <- liftM (fmap (buildReply (channel decodedMsg) (user decodedMsg))) mentionedUsers
+        void $ L8.putStrLn msg -- mostly for debug
+        sendMessages connection replies
+  --      if (channel decodedMsg == "C0460DZEC" )
   --        then replies >>= sequence . (sendMessages connection )
   --        else return [()]
-        
+
     let loop = do
             line <- getLine
             unless (null line) $ do
@@ -143,9 +150,8 @@ ws connection = do
 
     sendClose connection (pack "Bye!")
 
-sendMessages :: Network.WebSockets.Connection.Connection -> [L.ByteString] -> [IO ()]
-sendMessages _ [] = []
-sendMessages connection (x:xs) = sendTextData connection x : sendMessages connection xs
+sendMessages :: Foldable t => WS.Connection -> t L.ByteString -> IO ()
+sendMessages connection = traverse_ (sendTextData connection)
 
 data AwayField = AwayField
                  { uid :: String
